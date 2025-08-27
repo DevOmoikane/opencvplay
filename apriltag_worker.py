@@ -121,7 +121,7 @@ if __name__ == '__main__':
     from rich import print
     aw = ApriltagWorker()
     cap = cv2.VideoCapture(0)
-    fx, fy, cx, cy = (np.float64(620.3821303011521), np.float64(618.9357863151845), np.float64(319.5000000048588), np.float64(239.50000001303846))
+    fx, fy, cx, cy = (np.float64(651.4091046043549), np.float64(653.2336134231156), np.float64(318.32692349087426), np.float64(234.8164852829485))
     camera_params = (fx, fy, cx, cy)
     # colors are in (blue, green, red) format
     # positions go clockwise, starting at the top for faces and top left for joining lines
