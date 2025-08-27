@@ -116,15 +116,13 @@ def main():
                 else:
                     gray = frame
                 retval, corners, imagesize = calibrate(frame, imagesize)
+                if retval:
+                    ipoints.append(corners)
                 display = cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB)
                 cv2.drawChessboardCorners(display, patternsize, corners, retval)
                 cv2.imshow(win, display)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     break
-        if ret and frame is not None:
-            retval, corners, imagesize = calibrate(frame)
-            if retval:
-                ipoints.append(corners)
 
     flags = (cv2.CALIB_ZERO_TANGENT_DIST |
              cv2.CALIB_FIX_K1 |
