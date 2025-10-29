@@ -1,0 +1,3 @@
+Query:
+
+persons.query(where={"$and":[{"gender_Woman": {"$gt": 90}},{"dominant_race":"latino hispanic"}]},query_embeddings=[[-1]*128],n_results=1)['metadatas'][0][0]

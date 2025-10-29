@@ -120,8 +120,11 @@ class ApriltagWorker:
 if __name__ == '__main__':
     from rich import print
     aw = ApriltagWorker()
-    cap = cv2.VideoCapture(0)
-    fx, fy, cx, cy = (np.float64(651.4091046043549), np.float64(653.2336134231156), np.float64(318.32692349087426), np.float64(234.8164852829485))
+    # cap = cv2.VideoCapture(0)
+    cap = cv2.VideoCapture("rtsp://arkuscamera:arkus%40123@172.30.2.102/stream1")
+    # fx, fy, cx, cy = (np.float64(651.4091046043549), np.float64(653.2336134231156), np.float64(318.32692349087426), np.float64(234.8164852829485))
+    # fx, fy, cx, cy = (np.float64(1892.0706807453348), np.float64(1818.5143879856303), np.float64(412.7225243368738), np.float64(768.615851755001))
+    fx, fy, cx, cy = (1481.8077971295327, 1507.475253441751, 574.4842711481077, 434.2602529841753)
     camera_params = (fx, fy, cx, cy)
     # colors are in (blue, green, red) format
     # positions go clockwise, starting at the top for faces and top left for joining lines

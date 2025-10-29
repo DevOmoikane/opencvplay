@@ -1,0 +1,54 @@
+services:
+  chromadb:
+    image: chromadb/chroma:latest
+    volumes:
+      - ./chroma_data:/data
+    ports:
+      - "8000:8000"
+    networks:
+      backend:
+        ipv4_address: 192.168.10.2
+  
+  deepface:
+    image: serengil/deepface:latest
+    ports:
+      - "5000:5000"
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all # Makes all GPUs visible to the container
+      - NVIDIA_DRIVER_CAPABILITIES=all # Exposes all driver capabilities
+    volumes:
+      - /dev/dri/:/dev/dri/
+      - ./deepface_data:/root/.deepface/
+    networks:
+      backend:
+        ipv4_address: 192.168.10.3
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    environment:
+      - CHROMA_HOST=chromadb
+      - CHROMA_PORT=8000
+      - DEEPFACE_HOST=http://deepface:5000
+      - DISPLAY=$DISPLAY
+    volumes:
+      - /tmp/.X11-unix:/tmp/.X11-unix
+      - /etc/localtime:/etc/localtime:ro
+      - ./saved_people:/app/people
+      - ${WINDOWS_PATH:-/unused}:/app/windows
+    depends_on:
+      - chromadb
+      - deepface
+    networks:
+      backend:
+        ipv4_address: 192.168.10.10
+    entrypoint: ["python3", "people_definer.py"]
+
+networks:
+  backend:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 192.168.10.0/24
+          gateway: 192.168.10.1
