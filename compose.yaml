@@ -10,9 +10,19 @@ services:
         ipv4_address: 192.168.10.2
   
   deepface:
-    image: serengil/deepface:latest
+    # image: serengil/deepface:latest
+    build:
+      context: ../deepface
+      dockerfile: Dockerfile
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     ports:
-      - "5000:5000"
+      - "5100:5000"
     environment:
       - NVIDIA_VISIBLE_DEVICES=all # Makes all GPUs visible to the container
       - NVIDIA_DRIVER_CAPABILITIES=all # Exposes all driver capabilities

@@ -4,6 +4,8 @@ import base64
 import json
 import aiohttp
 import logging
+import cv2
+import numpy as np
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
@@ -21,11 +23,22 @@ import signal
 from typing import List, Dict, Optional, Set
 from rich.logging import RichHandler
 import ollama
+from ultralytics import YOLO
+import difPy
+
 
 FORMAT = "%(message)s"
 logging.basicConfig(
     level=logging.INFO, format=FORMAT, datefmt="[%X]", handlers=[RichHandler()]
 )
+
+YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", "yolo11s.onnx")
+YOLO_CFG = os.environ.get("YOLO_CFG", "yolo11s.cfg")
+YOLO_NAMES = os.environ.get("YOLO_NAMES", "coco.names")
+
+PERSON_CLASS_IDS = {0}  # in COCO, class 0 is 'person'
+CONF_THRESH = 0.35
+NMS_THRESH = 0.4
 
 class HumanLikeImageProcessor:
     def __init__(
@@ -53,6 +66,8 @@ class HumanLikeImageProcessor:
         # Sets to avoid duplicates and track progress
         self._seen_images_lock = threading.Lock()
         self._seen_images: Set[str] = set()
+
+        self.model = YOLO("yolo11s.pt")
 
         # Browser
         self.driver = None
@@ -151,16 +166,6 @@ class HumanLikeImageProcessor:
             self.logger.info(f"Loaded cookies from {self.cookies_file}")
         except Exception as e:
             self.logger.error(f"Error loading cookies: {e}")
-
-    def save_cookies(self, filename: str = None):
-        try:
-            cookies_file = filename or self.cookies_file or "browser_cookies.pkl"
-            cookies = self.driver.get_cookies()
-            with open(cookies_file, "wb") as file:
-                pickle.dump(cookies, file)
-            self.logger.info(f"Saved {len(cookies)} cookies to {cookies_file}")
-        except Exception as e:
-            self.logger.error(f"Error saving cookies: {e}")
 
     def _human_delay(self, delay_range: tuple):
         delay = random.uniform(*delay_range)
@@ -308,6 +313,11 @@ class HumanLikeImageProcessor:
         
     def save_image(self, image_data: bytes, filename: str):
         try:
+            # check the directory
+            directory = os.path.dirname(filename)
+            if not os.path.exists(directory):
+                # if directory does not exist, create it
+                os.makedirs(directory)
             image = Image.open(io.BytesIO(image_data))
             with open(filename, 'wb') as f:
                 image.save(f, format="JPEG", quality=85)
@@ -321,6 +331,28 @@ class HumanLikeImageProcessor:
         except Exception as e:
             self.logger.error(f"Error converting image to base64: {e}")
             return ""
+
+    async def is_a_person_in_image(self, image_data: bytes) -> bool:
+        try:
+            image_array = cv2.imdecode(
+                np.frombuffer(image_data, dtype=np.uint8), cv2.IMREAD_COLOR
+            )
+            if image_array is None:
+                return False
+            
+            results = self.model.predict(image_array)
+            has_person = False
+            for result in results:
+                for box in result.boxes:
+                    if int(box.cls) in PERSON_CLASS_IDS:
+                        has_person = True
+                        break
+                if has_person:
+                    break
+            return has_person
+        except Exception as e:
+            self.logger.error(f"Error checking if image contains a person: {e}")
+            return False
 
     async def process_with_deepface(self, image_data: bytes) -> Optional[Dict]:
         if self._stop_event.is_set():
@@ -346,7 +378,7 @@ class HumanLikeImageProcessor:
             self.logger.error(f"Error calling DeepFace: {e}")
             return None
 
-    async def describe_with_ollama(self, deepface_result: Dict, image: Image = None) -> Optional[str]:
+    async def describe_with_ollama(self, deepface_result: Dict, image_data: bytes = None) -> Optional[str]:
         if self._stop_event.is_set():
             return None
         try:
@@ -360,7 +392,7 @@ class HumanLikeImageProcessor:
 
             Provide a natural, human-like description of this person.
             """
-            result = ollama.generate(model="qwen3-vl:8b", prompt=prompt, stream=False, images=[image] if image else None)
+            result = ollama.generate(model="qwen3-vl:4b", prompt=prompt, stream=False, images=[image_data] if image_data else None)
             return result.response
         except Exception as e:
             self.logger.error(f"Error calling Ollama: {e}")
@@ -378,6 +410,14 @@ class HumanLikeImageProcessor:
         if image.height < 400 or image.width < 400:
             return None
 
+        new_file_name = 'woman_' + str(time.time())
+
+        has_person = await self.is_a_person_in_image(image_data)
+        if not has_person:
+            return None
+        
+        self.save_image(image_data, os.path.join('original', new_file_name + '.jpg'))
+        
         self._human_delay(self.download_delay)
 
         resized_image = self.resize_image(image_data)
@@ -385,22 +425,26 @@ class HumanLikeImageProcessor:
         if not deepface_result:
             return None
         
-        new_file_name = 'woman_' + str(time.time())
         if deepface_result['results'][0]['dominant_gender'] == 'Woman':
             # save the image with the filename as current time
-            self.save_image(image_data, new_file_name + '.jpg')
+            new_file_path = os.path.join('women', new_file_name + '.jpg')
+            self.save_image(image_data, new_file_path)
         else:
             return None
 
-        description = await self.describe_with_ollama(deepface_result, Image.open(io.BytesIO(resized_image)))
+        # description = await self.describe_with_ollama(deepface_result, resized_image)
         result = {
             "image_url": image_url,
             "deepface_analysis": deepface_result,
-            "description": description,
+            # "description": description,
             "processed_at": time.time(),
         }
         # save result to a text file as json
-        with open(new_file_name + '.txt', 'a') as f:
+        directory = os.path.dirname(os.path.join('women', new_file_name + '.txt'))
+        if not os.path.exists(directory):
+            # if directory does not exist, create it
+            os.makedirs(directory)
+        with open(os.path.join('women', new_file_name + '.txt'), 'a') as f:
             f.write(json.dumps(result) + '\n')
 
         self.processed_queue.put(result)
@@ -572,7 +616,7 @@ async def main():
         results = await processor.process_single_page_continuous(url)
         for result in results:
             logging.info(f"Image: {result['image_url']}")
-            logging.info(f"Description: {result['description']}")
+            # logging.info(f"Description: {result['description']}")
             logging.info("-" * 50)
     except KeyboardInterrupt:
         logging.error("\nKeyboard interrupt received in main...")
