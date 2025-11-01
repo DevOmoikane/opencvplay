@@ -568,7 +568,6 @@ class AdvancedPersonFinder:
             if file_path.suffix.lower() in ['.jpg', '.jpeg', '.png']:
                 self.add_person_to_db(file_path)
 
-    def search
     def search_person_by_metadata(self, metadata_filter):
         if self.client is None:
             return None
@@ -579,6 +578,7 @@ class AdvancedPersonFinder:
             include=["metadatas", "distances"]
         )
         if len(results['ids'][0]) > 0:
+            pass
 
 
 @click.command()
