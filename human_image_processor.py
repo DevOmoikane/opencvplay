@@ -188,6 +188,10 @@ class HumanLikeImageProcessor:
             consecutive_no_new_images = 0
             total_enqueued = 0
 
+            # first scroll up to refresh new items
+            self._scroll_up()
+            self._human_delay((10, 20))
+
             while (
                 not self._stop_event.is_set()
                 and scroll_count < max_scrolls
@@ -264,6 +268,18 @@ class HumanLikeImageProcessor:
         except Exception as e:
             self.logger.warning(f"Error collecting visible images: {e}")
             return set()
+
+    def _scroll_up(self) -> bool:
+        try:
+            current_position = self.driver.execute_script("return window.pageYOffset")
+            scroll_distance = random.randint(700, 800)
+            self.driver.execute_script(
+                f"window.scrollTo({{top: {current_position - scroll_distance}, behavior: 'smooth'}});"
+            )
+            return True
+        except Exception as e:
+            self.logger.warning(f"Error scrolling: {e}")
+            return False
 
     def _scroll_down(self) -> bool:
         try:
