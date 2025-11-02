@@ -34,6 +34,10 @@ NMS_THRESH = 0.4
 # ------------------------------
 # Selenium helpers
 # ------------------------------
+POST_SELECTOR = "div.xrvj5dj.xd0jker"
+PROFILE_SELECTOR = "span.xjp7ctv div a.x1i10hfl.xjbqb8w.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.x1ypdohk.xt0psk2.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x16tdsg8.x1hl2dhg.xggy1nq.x1a2a7pz.xp07o12.xzmqwrg.x1citr7e.x1kdxza.xt0b8zv"
+IMAGE_SELECTOR = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
+
 def create_driver(headless: bool = True) -> webdriver.Chrome:
     chrome_options = Options()
     if headless:
@@ -118,7 +122,8 @@ def load_netscape_cookies(driver: webdriver.Chrome, base_url: str, cookie_file_p
 # Image scraping helpers
 # ------------------------------
 def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
-    imgs = driver.find_elements(By.TAG_NAME, "img")
+    # imgs = driver.find_elements(By.TAG_NAME, "img")
+    imgs = driver.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR)
     urls = []
     for img in imgs:
         src = img.get_attribute("src") or ""

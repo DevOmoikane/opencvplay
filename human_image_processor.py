@@ -2,6 +2,7 @@
 import asyncio
 import base64
 import json
+from urllib.parse import urljoin
 import aiohttp
 import logging
 import cv2
@@ -25,7 +26,19 @@ from rich.logging import RichHandler
 import ollama
 from ultralytics import YOLO
 import difPy
+from dotenv import dotenv_values
+from dataclasses import dataclass
 
+
+config = {
+    **dotenv_values(".env"),
+    **os.environ,
+}
+
+@dataclass
+class ImageResult:
+    profile_url: str
+    image_url: str
 
 FORMAT = "%(message)s"
 logging.basicConfig(
@@ -39,6 +52,10 @@ YOLO_NAMES = os.environ.get("YOLO_NAMES", "coco.names")
 PERSON_CLASS_IDS = {0}  # in COCO, class 0 is 'person'
 CONF_THRESH = 0.35
 NMS_THRESH = 0.4
+
+POST_SELECTOR = "div.xrvj5dj.xd0jker"
+PROFILE_SELECTOR = "span.xjp7ctv div a.x1i10hfl.xjbqb8w.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.x1ypdohk.xt0psk2.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x16tdsg8.x1hl2dhg.xggy1nq.x1a2a7pz.xp07o12.xzmqwrg.x1citr7e.x1kdxza.xt0b8zv"
+IMAGE_SELECTOR = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
 
 class HumanLikeImageProcessor:
     def __init__(
@@ -199,15 +216,15 @@ class HumanLikeImageProcessor:
             ):
                 # Collect current images
                 new_images = self._collect_visible_images()
-
+                #TODO: also use the profile url to get all the images in that url
                 # Determine truly new URLs and enqueue
                 new_count = 0
-                for src in new_images:
-                    if self._mark_seen_if_new(src):
+                for imageresult in new_images:
+                    if self._mark_seen_if_new(imageresult.image_url):
                         # Put into async queue via asyncio.run_coroutine_threadsafe if needed.
                         # Here we assume we are called from the same thread that owns the loop via loop.call_soon_threadsafe
                         # Block until there is space (applies backpressure)
-                        if self._enqueue_url_blocking(src, timeout=1200):
+                        if self._enqueue_url_blocking(imageresult.image_url, timeout=1200):
                             new_count += 1
                         else:
                             # If we couldn’t enqueue (timeout or shutdown), stop producing further
@@ -254,16 +271,21 @@ class HumanLikeImageProcessor:
 
     def _collect_visible_images(self) -> set:
         try:
-            images = self.driver.find_elements(By.TAG_NAME, "img")
             visible_images = set()
-            for img in images:
-                try:
-                    if img.is_displayed():
-                        src = img.get_attribute("src")
-                        if src and src.startswith(("http", "https")):
-                            visible_images.add(src)
-                except Exception:
-                    continue
+            # images = self.driver.find_elements(By.TAG_NAME, "img")
+            post_elems = self.driver.find_elements(By.CSS_SELECTOR, POST_SELECTOR)
+            for post_elem in post_elems:
+                profile_elem = post_elem.find_element(By.CSS_SELECTOR, PROFILE_SELECTOR)
+                profile_url = urljoin("https://www.threads.com/", profile_elem.get_attribute("href"))
+                images = post_elem.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR)
+                for img in images:
+                    try:
+                        if img.is_displayed():
+                            src = img.get_attribute("src")
+                            if src:
+                                visible_images.add(ImageResult(src, profile_url))
+                    except Exception:
+                        continue
             return visible_images
         except Exception as e:
             self.logger.warning(f"Error collecting visible images: {e}")
@@ -356,16 +378,15 @@ class HumanLikeImageProcessor:
             if image_array is None:
                 return False
             
+            num_people=0
             results = self.model.predict(image_array)
             has_person = False
             for result in results:
                 for box in result.boxes:
                     if int(box.cls) in PERSON_CLASS_IDS:
                         has_person = True
-                        break
-                if has_person:
-                    break
-            return has_person
+                        num_people = num_people + 1
+            return has_person and num_people == 1
         except Exception as e:
             self.logger.error(f"Error checking if image contains a person: {e}")
             return False
@@ -374,7 +395,7 @@ class HumanLikeImageProcessor:
         if self._stop_event.is_set():
             return None
         try:
-            url = "http://localhost:5100/analyze"
+            url = f"{config['DEEPFACE_URL']}/analyze"
             async with aiohttp.ClientSession() as session:
                 json_data = {
                     "img": await self.image_to_base64(image_data),
@@ -398,7 +419,7 @@ class HumanLikeImageProcessor:
         if self._stop_event.is_set():
             return None
         try:
-            url = "http://localhost:11434/api/generate"
+            url = f"{config['OLLAMA_URL']}/api/generate"
             prompt = f"""
             Based on this facial analysis:
             - Age: {deepface_result.get('age', 'unknown')}
@@ -628,7 +649,7 @@ async def main():
     )
 
     try:
-        url = "https://threads.com"
+        url = "https://www.threads.com"
         results = await processor.process_single_page_continuous(url)
         for result in results:
             logging.info(f"Image: {result['image_url']}")
