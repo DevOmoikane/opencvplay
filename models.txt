@@ -1,0 +1,40 @@
+Models to download
+
+Anime face:
+https://huggingface.co/Fuyucchi/yolov8_animeface/resolve/main/yolov8x6_animeface.pt
+
+NSFW:
+https://huggingface.co/erax-ai/EraX-NSFW-V1.0?not-for-all-audiences=true
+https://huggingface.co/erax-ai/EraX-Anti-NSFW-V1.1?not-for-all-audiences=true
+
+driving:
+https://huggingface.co/Riser/YOLOP
+
+License plate (europe):
+https://huggingface.co/morsetechlab/yolov11-license-plate-detection
+
+Signatures:
+https://huggingface.co/tech4humans/yolov8s-signature-detector
+
+Age and gender:
+https://huggingface.co/Genius-Society/MiVOLO
+
+Facial attributes:
+https://huggingface.co/qualcomm/Facial-Attribute-Detection
+
+Car Parking:
+https://huggingface.co/Keerthana-g/car-parking-yolo-model
+
+Threat detection (gun, explosive, grenade, knife):
+https://huggingface.co/Subh775/Threat-Detection-YOLOv8n
+
+
+
+
+Custom training tools:
+https://github.com/zenml-io/awesome-open-data-annotation
+
+Label studio:
+https://github.com/HumanSignal/label-studio
+docker pull heartexlabs/label-studio:latest
+docker run -it -p 8080:8080 -v $(pwd)/mydata:/label-studio/data heartexlabs/label-studio:latest
