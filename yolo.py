@@ -62,8 +62,8 @@ def process_images_with_yolo(model_path, images_directory):
 
 if __name__ == "__main__":
     # Configuration - Update these paths according to your setup
-    MODEL_PATH = "erax_nsfw_yolo11s.pt"  # Replace with your model path
-    IMAGES_DIRECTORY = "/home/israel/my_win/Resources/Images/img"     # Replace with your images directory
+    MODEL_PATH = "yolov8s_aa11.pt"  # Replace with your model path
+    IMAGES_DIRECTORY = "/home/israel/my_win/Resources/Images/anime"     # Replace with your images directory
     
     # Process all images
     process_images_with_yolo(MODEL_PATH, IMAGES_DIRECTORY)

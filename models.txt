@@ -29,6 +29,8 @@ Threat detection (gun, explosive, grenade, knife):
 https://huggingface.co/Subh775/Threat-Detection-YOLOv8n
 
 
+Anime:
+https://huggingface.co/deepghs/booru_yolo/tree/16b923f886fe0005a31ba8a6302bbc21adcd255f
 
 
 Custom training tools:
