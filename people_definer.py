@@ -261,7 +261,8 @@ class DeepFace:
             return rj
         
         raise Exception(f"Response wat not succesfull {response.status_code}: {response.text} ")
-        
+    
+    @staticmethod
     def verify(img1_path, img2_path):
         """Verify similarity between two images"""
         base64_img1 = file_to_base64(img1_path)
@@ -280,7 +281,8 @@ class DeepFace:
             return response.json()
         
         return None
-        
+    
+    @staticmethod
     def represent(img_path, model_name, enforce_detection=True):
         """Extract facial features"""
         if not os.path.exists(img_path):

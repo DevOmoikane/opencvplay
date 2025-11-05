@@ -75,6 +75,7 @@ class HumanLikeImageProcessor:
 
         # Async streaming queues/state
         self.image_async_queue: Optional[asyncio.Queue] = None  # for URLs
+        self.profile_async_queue: Optional[asyncio.Queue] = None
         self.processed_queue = Queue()  # keep as sync if external code expects it
         self._producer_done = asyncio.Event()  # marks the end of production
         self._stop_event = threading.Event()
@@ -84,7 +85,7 @@ class HumanLikeImageProcessor:
         self._seen_images_lock = threading.Lock()
         self._seen_images: Set[str] = set()
 
-        self.model = YOLO("yolo11s.pt")
+        self.model = YOLO("yolo11m.pt")
 
         # Browser
         self.driver = None
@@ -99,7 +100,7 @@ class HumanLikeImageProcessor:
 
     # Python
     # Python
-    def _enqueue_url_blocking(self, src: str, timeout: float | None = None) -> bool:
+    def _enqueue_url_blocking(self, imageresult: ImageResult, timeout: float | None = None) -> bool:
         """
         Enqueue src into the asyncio queue from a non-async thread.
         Blocks this thread until the item is put (backpressure) or timeout.
@@ -111,7 +112,7 @@ class HumanLikeImageProcessor:
             return False
 
         async def _put_once():
-            await self.image_async_queue.put(src)
+            await self.image_async_queue.put(imageresult)
             return True
 
         fut = asyncio.run_coroutine_threadsafe(_put_once(), self._event_loop)
@@ -119,6 +120,51 @@ class HumanLikeImageProcessor:
             return fut.result(timeout=timeout)
         except Exception:
             return False
+
+    # Python
+    def _enqueue_profile_blocking(self, profile_url: str, timeout: float | None = None) -> bool:
+        if self._event_loop is None or self.profile_async_queue is None:
+            return False
+        if self._stop_event.is_set():
+            return False
+
+        async def _put_once():
+            await self.profile_async_queue.put(profile_url)
+            return True
+
+        fut = asyncio.run_coroutine_threadsafe(_put_once(), self._event_loop)
+        try:
+            return fut.result(timeout=timeout)
+        except Exception:
+            return False
+
+    # Python
+    async def _profile_worker(self, worker_id: int):
+        self.logger.info(f"Profile worker {worker_id} started")
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    profile_url = await asyncio.wait_for(self.profile_async_queue.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    if self._producer_done.is_set() and self.profile_async_queue.empty():
+                        break
+                    continue
+
+                try:
+                    # TODO: implement real processing for a profile page.
+                    # For now, just log and optionally schedule further actions.
+                    self.logger.info(f"[profile-worker-{worker_id}] queued profile: {profile_url}")
+                    # Example: you might navigate and enqueue new ImageResult items found there.
+                    # Keep this async and non-blocking relative to the main page producer.
+                except Exception as e:
+                    self.logger.error(f"Profile worker {worker_id} error processing {profile_url}: {e}")
+                finally:
+                    self.profile_async_queue.task_done()
+
+                if self._shutdown_initiated:
+                    break
+        finally:
+            self.logger.info(f"Profile worker {worker_id} exiting")
 
     def _setup_signal_handlers(self):
         def signal_handler(signum, frame):
@@ -224,7 +270,7 @@ class HumanLikeImageProcessor:
                         # Put into async queue via asyncio.run_coroutine_threadsafe if needed.
                         # Here we assume we are called from the same thread that owns the loop via loop.call_soon_threadsafe
                         # Block until there is space (applies backpressure)
-                        if self._enqueue_url_blocking(imageresult.image_url, timeout=1200):
+                        if self._enqueue_url_blocking(imageresult, timeout=1200):
                             new_count += 1
                         else:
                             # If we couldn’t enqueue (timeout or shutdown), stop producing further
@@ -274,16 +320,19 @@ class HumanLikeImageProcessor:
             visible_images = set()
             # images = self.driver.find_elements(By.TAG_NAME, "img")
             post_elems = self.driver.find_elements(By.CSS_SELECTOR, POST_SELECTOR)
+            self.logger.info(f"Found {len(post_elems)} posts")
             for post_elem in post_elems:
                 profile_elem = post_elem.find_element(By.CSS_SELECTOR, PROFILE_SELECTOR)
                 profile_url = urljoin("https://www.threads.com/", profile_elem.get_attribute("href"))
+                self.logger.info(f"Found profile URL: {profile_url}")
                 images = post_elem.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR)
+                self.logger.info(f"Found {len(images)} images")
                 for img in images:
                     try:
                         if img.is_displayed():
                             src = img.get_attribute("src")
                             if src:
-                                visible_images.add(ImageResult(src, profile_url))
+                                visible_images.add(ImageResult(image_url=src, profile_url=profile_url))
                     except Exception:
                         continue
             return visible_images
@@ -380,6 +429,7 @@ class HumanLikeImageProcessor:
             
             num_people=0
             results = self.model.predict(image_array)
+            self.logger.info(results)
             has_person = False
             for result in results:
                 for box in result.boxes:
@@ -435,11 +485,11 @@ class HumanLikeImageProcessor:
             self.logger.error(f"Error calling Ollama: {e}")
             return None
 
-    async def process_single_image(self, image_url: str):
+    async def process_single_image(self, image_resource: ImageResult):
         if self._stop_event.is_set():
             return None
-        self.logger.info(f"Processing image: {image_url}")
-        image_data = await self.download_image(image_url)
+        self.logger.info(f"Processing image: {image_resource.image_url}")
+        image_data = await self.download_image(image_resource.image_url)
         if not image_data:
             return None
         
@@ -452,6 +502,18 @@ class HumanLikeImageProcessor:
         has_person = await self.is_a_person_in_image(image_data)
         if not has_person:
             return None
+        
+        # Python
+        # Queue the profile for later processing and continue
+        try:
+            # Non-blocking variant if running inside event loop
+            if self.profile_async_queue is not None:
+                await self.profile_async_queue.put(image_resource.profile_url)
+            else:
+                # Fallback if we only have loop from other threads
+                self._enqueue_profile_blocking(image_resource.profile_url, timeout=60)
+        except Exception as e:
+            self.logger.warning(f"Could not enqueue profile URL {image_resource.profile_url}: {e}")
         
         self.save_image(image_data, os.path.join('original', new_file_name + '.jpg'))
         
@@ -471,7 +533,7 @@ class HumanLikeImageProcessor:
 
         # description = await self.describe_with_ollama(deepface_result, resized_image)
         result = {
-            "image_url": image_url,
+            "image_url": image_resource.image_url,
             "deepface_analysis": deepface_result,
             # "description": description,
             "processed_at": time.time(),
@@ -497,7 +559,7 @@ class HumanLikeImageProcessor:
             while not self._stop_event.is_set():
                 try:
                     # Use timeout so we can check stop flags periodically
-                    url = await asyncio.wait_for(self.image_async_queue.get(), timeout=0.5)
+                    imageresult = await asyncio.wait_for(self.image_async_queue.get(), timeout=0.5)
                 except asyncio.TimeoutError:
                     # If producer done and queue empty, exit
                     if self._producer_done.is_set() and self.image_async_queue.empty():
@@ -505,9 +567,9 @@ class HumanLikeImageProcessor:
                     continue
 
                 try:
-                    await self.process_single_image(url)
+                    await self.process_single_image(imageresult)
                 except Exception as e:
-                    self.logger.error(f"Worker {worker_id} error processing {url}: {e}")
+                    self.logger.error(f"Worker {worker_id} error processing {imageresult.image_url}: {e}")
                 finally:
                     self.image_async_queue.task_done()
 
@@ -575,11 +637,13 @@ class HumanLikeImageProcessor:
 
         # Prepare per-run state
         self.image_async_queue = asyncio.Queue(maxsize=self.max_workers * 4)
+        self.profile_async_queue = asyncio.Queue(maxsize=self.max_workers * 4)
         self._producer_done = asyncio.Event()
         self._seen_images = set()
 
         # Start workers
         workers = [asyncio.create_task(self._worker(i + 1)) for i in range(self.max_workers)]
+        profile_workers = [asyncio.create_task(self._profile_worker(i + 1)) for i in range(max(1, self.max_workers // 2 or 1))]
 
         # Run producer in thread to avoid blocking event loop (Selenium is sync)
         loop = asyncio.get_running_loop()
@@ -603,12 +667,33 @@ class HumanLikeImageProcessor:
         timeout = 30 if self._shutdown_initiated else 1200
         await self.wait_for_completion(timeout=timeout)
 
+        # Also wait for profile queue to drain similarly
+        start = time.time()
+        while time.time() - start < timeout:
+            if self.profile_async_queue.empty():
+                break
+            if self._shutdown_initiated and time.time() - start > 10:
+                self.logger.info("Shutdown: exiting before profile queue fully drained")
+                break
+            await asyncio.sleep(0.2)
+        else:
+            self.logger.warning("Timeout reached while waiting for profile queue to drain")
+
         # Cancel lingering workers if any still running
         for w in workers:
             if not w.done():
                 w.cancel()
         # Gather workers safely
         for w in workers:
+            try:
+                await w
+            except asyncio.CancelledError:
+                pass
+
+        for w in profile_workers:
+            if not w.done():
+                w.cancel()
+        for w in profile_workers:
             try:
                 await w
             except asyncio.CancelledError:
@@ -644,7 +729,7 @@ class HumanLikeImageProcessor:
 async def main():
     processor = HumanLikeImageProcessor(
         max_workers=1,
-        headless=True,
+        headless=False,
         cookies_file="threads_cookies.txt",  # Optional
     )
 
