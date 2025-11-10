@@ -37,6 +37,7 @@ NMS_THRESH = 0.4
 POST_SELECTOR = "div.xrvj5dj.xd0jker"
 PROFILE_SELECTOR = "span.xjp7ctv div a.x1i10hfl.xjbqb8w.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.x1ypdohk.xt0psk2.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x16tdsg8.x1hl2dhg.xggy1nq.x1a2a7pz.xp07o12.xzmqwrg.x1citr7e.x1kdxza.xt0b8zv"
 IMAGE_SELECTOR = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
+VIDEO_SELECTOR = "video.x1lliihq.x5yr21d.xh8yej3"
 
 def create_driver(headless: bool = True) -> webdriver.Chrome:
     chrome_options = Options()
@@ -130,8 +131,11 @@ def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
         if not src:
             continue
         # Resolve relative URLs
-        full = urljoin(base_url, src)
-        urls.append(full)
+        if src.startswith("http"):
+            urls.append(src)
+        else:
+            full = urljoin(base_url, src)
+            urls.append(full)
     # Deduplicate while preserving order
     seen = set()
     deduped = []
@@ -141,6 +145,28 @@ def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
             deduped.append(u)
     return deduped
 
+def find_video_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
+    videos = driver.find_elements(By.CSS_SELECTOR, VIDEO_SELECTOR)
+    urls = []
+    for video in videos:
+        src = video.get_attribute("src") or ""
+        if not src:
+            continue
+        # Resolve relative URLs
+        if src.startswith("http"):
+            urls.append(src)
+        else:
+            full = urljoin(base_url, src)
+            urls.append(full)
+    # Deduplicate while preserving order
+    seen = set()
+    deduped = []
+    for u in urls:
+        if u not in seen:
+            seen.add(u)
+            deduped.append(u)
+    return deduped    
+
 def download_image_bytes(url: str, session: requests.Session) -> bytes | None:
     try:
         resp = session.get(url, timeout=20)
@@ -149,6 +175,16 @@ def download_image_bytes(url: str, session: requests.Session) -> bytes | None:
     except Exception:
         return None
     return None
+
+def download_link(url: str, session: requests.Session):
+    try:
+        with session.get(url, stream=True) as resp:
+            resp.raise_for_status()
+            with open(os.path.basename(urlparse(url).path), "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+    except Exception as e:
+        print(f"[ERROR] {url}")
 
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
@@ -189,11 +225,14 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
     driver = create_driver(headless=headless)
     try:
         image_urls = []
+        video_urls = []
         if url is not None:
             load_netscape_cookies(driver, url, cookies_file)
             logging.info(f"Collecting images from: {url}")
             image_urls = find_image_urls(driver, url)
+            video_urls = find_video_urls(driver, url)
             logging.info(f"Found {len(image_urls)} image(s).")
+            logging.info(f"Found {len(video_urls)} videos(s).")
         elif base_url is not None and girls_list_file is not None:
             logging.info(f"Collecting images from file list")
             with open(girls_list_file, 'r') as f:
@@ -204,11 +243,20 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
                         load_netscape_cookies(driver, girl_url, cookies_file)
                         logging.info(f"Collecting images from: {girl_url}")
                         imgs = find_image_urls(driver, girl_url)
+                        videos = find_video_urls(driver, girl_url)
                         logging.info(f"Found {len(imgs)} image(s) for {girl}")
                         image_urls.extend(imgs)
+                        logging.info(f"Found {len(videos)} videos(s) for {girl}")
+                        video_urls.extend(videos)
 
         processed = load_processed(processed_log)
         session = requests.Session()
+
+        try:
+            for video_url in video_urls:
+                download_link(video_url, session)
+        except Exception as e:
+            print(f"[ERROR] {video_url}")
 
         for idx, img_url in enumerate(image_urls, start=1):
             if img_url in processed:

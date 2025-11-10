@@ -1,6 +1,7 @@
 services:
   chromadb:
     image: chromadb/chroma:latest
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./chroma_data:/data
     ports:
@@ -42,6 +43,7 @@ services:
       - CHROMA_PORT=8000
       - DEEPFACE_HOST=http://deepface:5000
       - DISPLAY=$DISPLAY
+    user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - /tmp/.X11-unix:/tmp/.X11-unix
       - /etc/localtime:/etc/localtime:ro
