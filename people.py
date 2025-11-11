@@ -64,6 +64,8 @@ def load_netscape_cookies(driver: webdriver.Chrome, base_url: str, cookie_file_p
     Loads cookies in Netscape format into the Selenium driver.
     Cookies must match the domain; we first open base_url so we can set cookies.
     """
+
+    logging.info(f"Loading cookies from {cookie_file_path}")
     if not os.path.exists(cookie_file_path):
         raise FileNotFoundError(f"Cookie file not found: {cookie_file_path}")
 
@@ -101,6 +103,7 @@ def load_netscape_cookies(driver: webdriver.Chrome, base_url: str, cookie_file_p
                 # Ignore cookies that don't match current domain/subdomain
                 pass
 
+def load_girl_page(driver: webdriver.Chrome, base_url: str):
     # Refresh to apply cookies
     driver.get(base_url)
 
@@ -176,11 +179,11 @@ def download_image_bytes(url: str, session: requests.Session) -> bytes | None:
         return None
     return None
 
-def download_link(url: str, session: requests.Session):
+def download_link(url: str, session: requests.Session, output_path: str = "./"):
     try:
         with session.get(url, stream=True) as resp:
             resp.raise_for_status()
-            with open(os.path.basename(urlparse(url).path), "wb") as f:
+            with open(os.path.join(output_path, os.path.basename(urlparse(url).path)), "wb") as f:
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
     except Exception as e:
@@ -235,26 +238,30 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
             logging.info(f"Found {len(video_urls)} videos(s).")
         elif base_url is not None and girls_list_file is not None:
             logging.info(f"Collecting images from file list")
+            load_netscape_cookies(driver, "https://www.threads.com", cookies_file)
             with open(girls_list_file, 'r') as f:
                 for line in f:
                     girl = line.strip()
-                    if girl:
-                        girl_url = base_url + girl
-                        load_netscape_cookies(driver, girl_url, cookies_file)
-                        logging.info(f"Collecting images from: {girl_url}")
-                        imgs = find_image_urls(driver, girl_url)
-                        videos = find_video_urls(driver, girl_url)
-                        logging.info(f"Found {len(imgs)} image(s) for {girl}")
-                        image_urls.extend(imgs)
-                        logging.info(f"Found {len(videos)} videos(s) for {girl}")
-                        video_urls.extend(videos)
+                    if girl is not None:
+                        try:
+                            girl_url = base_url + girl
+                            load_girl_page(driver, girl_url)
+                            logging.info(f"Collecting images from: {girl_url}")
+                            imgs = find_image_urls(driver, girl_url)
+                            videos = find_video_urls(driver, girl_url)
+                            logging.info(f"Found {len(imgs)} image(s) for {girl}")
+                            image_urls.extend(imgs)
+                            logging.info(f"Found {len(videos)} videos(s) for {girl}")
+                            video_urls.extend(videos)
+                        except Exception:
+                            pass
 
         processed = load_processed(processed_log)
         session = requests.Session()
 
         try:
             for video_url in video_urls:
-                download_link(video_url, session)
+                download_link(video_url, session, output_dir)
         except Exception as e:
             print(f"[ERROR] {video_url}")
 
@@ -263,7 +270,7 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
                 continue
 
             # Random delay 2–5 seconds
-            delay = random.uniform(2.0, 5.0)
+            delay = random.uniform(0.10, 1.0)
             time.sleep(delay)
 
             data = download_image_bytes(img_url, session)
@@ -302,7 +309,8 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
                     save_path = f"{root}_{c}{ext}"
                     c += 1
                 try:
-                    cv2.imwrite(save_path, image_array)
+                    # cv2.imwrite(save_path, image_array)
+                    download_link(img_url, session, output_dir)
                     print(f"[SAVED] {save_path}")
                 except Exception as e:
                     print(f"[ERROR] {save_path}")
