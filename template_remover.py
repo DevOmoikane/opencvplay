@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 import torchvision.transforms as T
+from PIL import Image
 from torchvision.models import resnet18, ResNet18_Weights
 from resynthesizer import resynthesize
 from rich.progress import Progress
@@ -265,8 +266,10 @@ def apply_region_filter(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -
     Apply a filter to the detected region only.
     Here: a strong Gaussian blur as an example.
     """
+    pil_img = Image.fromarray(frame)
     mask = create_mask_from_coordinates(frame.shape, x1, y1, x2, y2)
-    result = resynthesize(frame, mask)
+    mask_pil = Image.fromarray(mask)
+    result = resynthesize(pil_img, mask_pil)
     return result
 
 def parse_args() -> argparse.Namespace:
