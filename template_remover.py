@@ -269,7 +269,8 @@ def apply_region_filter(frame: np.ndarray, x1: int, y1: int, x2: int, y2: int) -
     pil_img = Image.fromarray(frame)
     mask = create_mask_from_coordinates(frame.shape, x1, y1, x2, y2)
     mask_pil = Image.fromarray(mask)
-    result = resynthesize(pil_img, mask_pil)
+    result_pil = resynthesize(pil_img, mask_pil)
+    result = np.array(result_pil)
     return result
 
 def parse_args() -> argparse.Namespace:
