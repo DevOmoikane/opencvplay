@@ -14,6 +14,41 @@ from matplotlib import pyplot as plt
 import traceback
 
 
+template_cache = {}
+sift = cv2.SIFT_create()
+
+def search(template_path: str, image_path: str, min_match: int = 10, flann_index_kdtree: int = 0):
+    # check if template path already in template_cache
+    kp_template = None
+    des_template = None
+    img_template = None
+    if template_path not in template_cache:
+        img_template = cv2.imread('template.png', 0)
+        kp_template, des_template = sift.detectAndCompute(img_template, None)
+        template_cache[template_path] = (kp_template, des_template, img_template)
+    else:
+        kp_template, des_template, img_template = template_cache[template_path]
+
+    image = cv2.imread(image_path, 0)
+    kp_image, des_image = sift.detectAndCompute(image, None)
+    index_params = dict(algorithm=flann_index_kdtree, trees=5)
+    search_params = dict(checks=50)
+    flann = cv2.FlannBasedMatcher(index_params, search_params)
+    matches = flann.knnMatch(des_template, des_image, k=2)
+    good = []
+    for m, n in matches:
+        if m.distance < 0.7 * n.distance:
+            good.append(m)
+    if len(good) > min_match:
+        template_pts = np.float32([kp_template[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
+        image_pts = np.float32([kp_image[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
+        M, mask = cv2.findHomography(template_pts, image_pts, cv2.RANSAC, 5.0)
+        matchesMask = mask.ravel().toList()
+        h, w = img_template.shape
+        pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
+        dst = cv2.perspectiveTransform(pts, M)
+        #image = cv2.polylines(image, [np.int32(dst)], True, 255, 3, cv2.LINE_AA)
+
 @click.command()
 @click.option("--template-dir", type=click.Path(exists=True), default="templates", help="Folder containing templates.")
 @click.option("--image-dir", type=click.Path(exists=True), default="images", help="Folder containing images.")
