@@ -9,7 +9,7 @@ from PIL import Image
 from torchvision.models import resnet18, ResNet18_Weights
 from sklearn.cluster import DBSCAN
 from resynthesizer import resynthesize
-from rich.progress import Progress
+from rich.progress import Progress, TextColumn, BarColumn, TaskProgressColumn, TimeRemainingColumn, SpinnerColumn
 import click
 from matplotlib import pyplot as plt
 import traceback
@@ -24,14 +24,22 @@ def search_single_match(template_path: str, image_path: str, min_match: int = 10
     des_template = None
     img_template = None
     if template_path not in template_cache:
-        img_template = cv2.imread('template.png', 0)
+        img_template = cv2.imread(template_path, 0)  # Fixed: was reading 'template.png' instead of template_path
+        if img_template is None:
+            return None
         kp_template, des_template = sift.detectAndCompute(img_template, None)
         template_cache[template_path] = (kp_template, des_template, img_template)
     else:
         kp_template, des_template, img_template = template_cache[template_path]
 
     image = cv2.imread(image_path, 0)
+    if image is None:
+        return None
     kp_image, des_image = sift.detectAndCompute(image, None)
+    
+    if des_template is None or des_image is None:
+        return None
+        
     index_params = dict(algorithm=flann_index_kdtree, trees=5)
     search_params = dict(checks=50)
     flann = cv2.FlannBasedMatcher(index_params, search_params)
@@ -44,11 +52,12 @@ def search_single_match(template_path: str, image_path: str, min_match: int = 10
         template_pts = np.float32([kp_template[m.queryIdx].pt for m in good]).reshape(-1, 1, 2)
         image_pts = np.float32([kp_image[m.trainIdx].pt for m in good]).reshape(-1, 1, 2)
         M, mask = cv2.findHomography(template_pts, image_pts, cv2.RANSAC, 5.0)
+        if M is None:
+            return None
         matchesMask = mask.ravel().tolist()
         h, w = img_template.shape
         pts = np.float32([[0, 0], [0, h - 1], [w - 1, h - 1], [w - 1, 0]]).reshape(-1, 1, 2)
         dst = cv2.perspectiveTransform(pts, M)
-        #image = cv2.polylines(image, [np.int32(dst)], True, 255, 3, cv2.LINE_AA)
         return np.int32(dst).reshape((dst.shape[0],dst.shape[2]))
     else:
         return None
@@ -61,13 +70,20 @@ def search_multiple_matches(template_path: str, image_path: str, min_match: int 
     # Load or get cached template data
     if template_path not in template_cache:
         img_template = cv2.imread(template_path, 0)
+        if img_template is None:
+            return None
         kp_template, des_template = sift.detectAndCompute(img_template, None)
         template_cache[template_path] = (kp_template, des_template, img_template)
     else:
         kp_template, des_template, img_template = template_cache[template_path]
 
     image = cv2.imread(image_path, 0)
+    if image is None:
+        return None
     kp_image, des_image = sift.detectAndCompute(image, None)
+    
+    if des_template is None or des_image is None:
+        return None
     
     # FLANN matcher
     index_params = dict(algorithm=flann_index_kdtree, trees=5)
@@ -144,6 +160,13 @@ def create_mask_from_coordinates(mask: np.ndarray, x1: int, y1: int, x2: int, y2
     cv2.rectangle(mask, top_left_padded, bottom_right_padded, 255, -1)
     return mask
 
+def create_mask_from_polygons(image_shape: tuple, polygons: list) -> np.ndarray:
+    """Create mask from polygon coordinates"""
+    mask = np.zeros(image_shape[:2], dtype=np.uint8)
+    for polygon in polygons:
+        cv2.fillPoly(mask, [polygon], 255)
+    return mask
+
 def create_mask_from_list(source_frame: np.ndarray, coordinates: list[tuple[int, int, int, int]]) -> np.ndarray:
     mask = np.zeros(source_frame.shape[:2], dtype=np.uint8)
     for x1, y1, x2, y2 in coordinates:
@@ -157,15 +180,148 @@ def apply_filter_to_mask(frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
     result = np.array(result_pil)
     return result
 
+def get_image_files(directory: str) -> list:
+    """Get all image files from directory"""
+    valid_extensions = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.tif', '.webp'}
+    image_files = []
+    for file in os.listdir(directory):
+        if os.path.isfile(os.path.join(directory, file)):
+            ext = os.path.splitext(file)[1].lower()
+            if ext in valid_extensions:
+                image_files.append(file)
+    return sorted(image_files)
+
+def process_image_with_templates(image_path: str, template_files: list, template_dir: str, 
+                               output_dir: str, progress, template_task, min_match: int = 10):
+    """Process a single image with all templates"""
+    try:
+        # Read the image once
+        image = cv2.imread(image_path)
+        if image is None:
+            progress.console.print(f"[red]Error reading image: {os.path.basename(image_path)}[/red]")
+            return
+        
+        image_gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+        all_matches = []
+        
+        # Process each template
+        for template_file in template_files:
+            template_path = os.path.join(template_dir, template_file)
+            
+            # Update template progress
+            progress.update(template_task, advance=1, description=f"Template: {template_file[:20]}...")
+            
+            # Search for multiple matches
+            matches = search_multiple_matches(
+                template_path, 
+                image_path, 
+                min_match=min_match, 
+                max_matches=10
+            )
+            
+            if matches:
+                all_matches.extend(matches)
+                progress.console.print(f"[green]Found {len(matches)} instances of {template_file} in {os.path.basename(image_path)}[/green]")
+            else:
+                progress.console.print(f"[yellow]No matches found for {template_file} in {os.path.basename(image_path)}[/yellow]")
+        
+        # Apply resynthesize if we found any matches
+        if all_matches:
+            # Create combined mask from all matches
+            mask = create_mask_from_polygons(image.shape, all_matches)
+            
+            # Apply resynthesize filter
+            result = apply_filter_to_mask(cv2.cvtColor(image, cv2.COLOR_BGR2RGB), mask)
+            
+            # Save result
+            output_filename = f"{os.path.basename(image_path)}"
+            output_path = os.path.join(output_dir, output_filename)
+            cv2.imwrite(output_path, cv2.cvtColor(result, cv2.COLOR_RGB2BGR))
+            
+            progress.console.print(f"[blue]Saved processed image: {output_filename}[/blue]")
+        else:
+            progress.console.print(f"[yellow]No matches found in {os.path.basename(image_path)}, skipping[/yellow]")
+            
+    except Exception as e:
+        progress.console.print(f"[red]Error processing {os.path.basename(image_path)}: {str(e)}[/red]")
+        progress.console.print(traceback.format_exc())
+
 @click.command()
 @click.option("--template-dir", type=click.Path(exists=True), default="templates", help="Folder containing templates.")
 @click.option("--image-dir", type=click.Path(exists=True), default="images", help="Folder containing images.")
 @click.option("--output-dir", type=click.Path(exists=False), default="output", help="Folder to save processed images.")
+@click.option("--min-matches", type=int, default=10, help="Minimum number of matches required.")
+@click.option("--max-matches", type=int, default=5, help="Maximum number of matches to find per template.")
 def main(**options):
+    template_dir = options["template_dir"]
+    image_dir = options["image_dir"]
     output_dir = options["output_dir"]
+    min_matches = options["min_matches"]
+    max_matches = options["max_matches"]
+    
+    # Create output directory
     os.makedirs(output_dir, exist_ok=True)
-    t_root, _, t_files = os.walk(options["template_dir"])
-    root, _, files = os.walk(options["image_dir"])
+    
+    # Get template and image files
+    template_files = get_image_files(template_dir)
+    image_files = get_image_files(image_dir)
+    
+    if not template_files:
+        print(f"No template images found in {template_dir}")
+        return
+        
+    if not image_files:
+        print(f"No images found in {image_dir}")
+        return
+    
+    print(f"Found {len(template_files)} templates and {len(image_files)} images")
+    
+    # Configure rich progress
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TimeRemainingColumn(),
+        console=None,
+        expand=False
+    ) as progress:
+        # Main task for images
+        main_task = progress.add_task(
+            f"[cyan]Processing {len(image_files)} images...", 
+            total=len(image_files)
+        )
+        
+        for image_file in image_files:
+            image_path = os.path.join(image_dir, image_file)
+            
+            # Update main progress
+            progress.update(main_task, advance=0, description=f"[cyan]Processing: {image_file[:30]}...")
+            
+            # Create sub-task for templates
+            template_task = progress.add_task(
+                f"[yellow]Checking {len(template_files)} templates...", 
+                total=len(template_files)
+            )
+            
+            # Process this image with all templates
+            process_image_with_templates(
+                image_path, 
+                template_files, 
+                template_dir, 
+                output_dir, 
+                progress, 
+                template_task,
+                min_match=min_matches
+            )
+            
+            # Remove the template task when done
+            progress.remove_task(template_task)
+            
+            # Advance main progress
+            progress.update(main_task, advance=1)
+        
+        progress.console.print("[green]✓ All images processed successfully![/green]")
 
 if __name__ == "__main__":
     main()
