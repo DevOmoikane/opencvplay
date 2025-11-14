@@ -1,0 +1,11 @@
+[project]
+name = "opencvplay"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11.14"
+dependencies = [
+    "paddle>=1.1.8",
+    "paddleocr>=3.3.2",
+    "paddlepaddle>=3.2.2",
+]
