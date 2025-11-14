@@ -19,8 +19,8 @@ from matplotlib import pyplot as plt
 @click.option("--output-dir", type=click.Path(exists=False), default="output", help="Folder to save processed images.")
 def main(**options):
     os.makedirs(options["output_dir"], exist_ok=True)
-    t_root, _, t_files = os.walk(options["template_dir"])
-    root, _, files = os.walk(options["image_dir"])
+    # t_root, _, t_files = os.walk(options["template_dir"])
+    # root, _, files = os.walk(options["image_dir"])
 
     MIN_MATCH_COUNT = 10
     img1 = cv2.imread('template.png', 0)
