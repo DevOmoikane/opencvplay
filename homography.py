@@ -27,7 +27,7 @@ def main(**options):
         MIN_MATCH_COUNT = 10
         img1 = cv2.imread('template.png', 0)
         img2 = cv2.imread('frame.jpg', 0)
-        sift = cv2.SIFT()
+        sift = cv2.SIFT_create()
         # find the keypoints and descriptors with SIFT
         kp1, des1 = sift.detectAndCompute(img1, None)
         kp2, des2 = sift.detectAndCompute(img2, None)
