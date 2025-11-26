@@ -37,6 +37,7 @@ NMS_THRESH = 0.4
 POST_SELECTOR = "div.xrvj5dj.xd0jker"
 PROFILE_SELECTOR = "span.xjp7ctv div a.x1i10hfl.xjbqb8w.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.x1ypdohk.xt0psk2.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x16tdsg8.x1hl2dhg.xggy1nq.x1a2a7pz.xp07o12.xzmqwrg.x1citr7e.x1kdxza.xt0b8zv"
 IMAGE_SELECTOR = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
+IMAGE_SELECTOR_ALT = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk.x1ey2m1c.xtijo5x.x1o0tod.x10l6tqk.x13vifvy.x5yr21d.xh8yej3"
 VIDEO_SELECTOR = "video.x1lliihq.x5yr21d.xh8yej3"
 
 def create_driver(headless: bool = True) -> webdriver.Chrome:
@@ -121,6 +122,35 @@ def load_girl_page(driver: webdriver.Chrome, base_url: str):
     except Exception as e:
         logging.warning(f"Error while scrolling: {e}")
 
+def remove_duplicates(array1: list[str], array2: list[str]) -> list[str]:
+    return [item for item in array2 if item not in array1]
+
+def load_girl_page_dynamic(driver: webdriver.Chrome, base_url: str) -> tuple[list[str], list[str]]:
+    driver.get(base_url)
+    time.sleep(3)
+    scroll_count = 0
+    image_array = []
+    video_array = []
+    try:
+        not_found_counter = 0
+        while True:
+            images = find_image_urls(driver, base_url)
+            videos = find_video_urls(driver, base_url)
+            images = remove_duplicates(image_array, images)
+            videos = remove_duplicates(video_array, videos)
+            if len(images)==0 and len(videos)==0:
+                not_found_counter += 1
+            if not_found_counter >= 10:
+                break
+            if len(images) > 0:
+                image_array.extend(images)
+            if len(videos) > 0:
+                video_array.extend(videos)
+            if not scroll_page(driver):
+                break
+    except Exception as e:
+        logging.warning(f"Error while scrolling: {e}")
+    return image_array, video_array
 
 # ------------------------------
 # Image scraping helpers
@@ -130,9 +160,21 @@ def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
     imgs = driver.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR)
     urls = []
     for img in imgs:
-        src = img.get_attribute("src") or ""
-        if not src:
-            continue
+        srcset = img.get_attribute("srcset") or ""
+        src = ""
+        if srcset:
+            srcsetarray = srcset.split(',')
+            src_dict = {}
+            for pair in srcsetarray:
+                link, size_str = pair.split(' ', 1)
+                size = int(size_str.replace('w', ''))
+                src_dict[size] = link
+            bigger = max(src_dict.keys())
+            src = src_dict[bigger]
+        else:
+            src = img.get_attribute("src") or ""
+            if not src:
+                continue
         # Resolve relative URLs
         if src.startswith("http"):
             urls.append(src)
@@ -231,9 +273,8 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
         video_urls = []
         if url is not None:
             load_netscape_cookies(driver, url, cookies_file)
-            logging.info(f"Collecting images from: {url}")
-            image_urls = find_image_urls(driver, url)
-            video_urls = find_video_urls(driver, url)
+            logging.info(f"Collecting from: {url}")
+            image_urls, video_urls = load_girl_page_dynamic(driver, url)
             logging.info(f"Found {len(image_urls)} image(s).")
             logging.info(f"Found {len(video_urls)} videos(s).")
         elif base_url is not None and girls_list_file is not None:
@@ -245,13 +286,11 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
                     if girl is not None:
                         try:
                             girl_url = base_url + girl
-                            load_girl_page(driver, girl_url)
-                            logging.info(f"Collecting images from: {girl_url}")
-                            imgs = find_image_urls(driver, girl_url)
-                            videos = find_video_urls(driver, girl_url)
-                            logging.info(f"Found {len(imgs)} image(s) for {girl}")
-                            image_urls.extend(imgs)
+                            logging.info(f"Collecting from: {girl_url}")
+                            images, videos = load_girl_page_dynamic(driver, girl_url)
+                            logging.info(f"Found {len(images)} image(s) for {girl}")
                             logging.info(f"Found {len(videos)} videos(s) for {girl}")
+                            image_urls.extend(images)
                             video_urls.extend(videos)
                         except Exception:
                             pass
