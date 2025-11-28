@@ -15,8 +15,11 @@ import numpy as np
 from ultralytics import YOLO
 import difPy
 import logging
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
+
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(filename)s:%(funcName)s:%(lineno)d - %(message)s')
+logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
 # ------------------------------
 # YOLO (OpenCV DNN) configuration
@@ -133,21 +136,29 @@ def load_girl_page_dynamic(driver: webdriver.Chrome, base_url: str) -> tuple[lis
     video_array = []
     try:
         not_found_counter = 0
-        while True:
-            images = find_image_urls(driver, base_url)
-            videos = find_video_urls(driver, base_url)
-            images = remove_duplicates(image_array, images)
-            videos = remove_duplicates(video_array, videos)
-            if len(images)==0 and len(videos)==0:
-                not_found_counter += 1
-            if not_found_counter >= 10:
-                break
-            if len(images) > 0:
-                image_array.extend(images)
-            if len(videos) > 0:
-                video_array.extend(videos)
-            if not scroll_page(driver):
-                break
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            TextColumn("[cyan]{task.completed}"),
+            transient=False,
+        ) as progress:
+            task = progress.add_task("[red]Obtaining links...", total=None)
+            while True:
+                images = find_image_urls(driver, base_url)
+                videos = find_video_urls(driver, base_url)
+                images = remove_duplicates(image_array, images)
+                videos = remove_duplicates(video_array, videos)
+                progress.update(task, completed=(len(image_array)+len(video_array)))
+                if len(images)==0 and len(videos)==0:
+                    not_found_counter += 1
+                if not_found_counter >= 10:
+                    break
+                if len(images) > 0:
+                    image_array.extend(images)
+                if len(videos) > 0:
+                    video_array.extend(videos)
+                if not scroll_page(driver):
+                    break
     except Exception as e:
         logging.warning(f"Error while scrolling: {e}")
     return image_array, video_array
@@ -229,7 +240,7 @@ def download_link(url: str, session: requests.Session, output_path: str = "./"):
                 for chunk in resp.iter_content(chunk_size=8192):
                     f.write(chunk)
     except Exception as e:
-        print(f"[ERROR] {url}")
+        logging.info(f"[ERROR] {url}")
 
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
@@ -298,68 +309,80 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
         processed = load_processed(processed_log)
         session = requests.Session()
 
-        try:
-            for video_url in video_urls:
-                download_link(video_url, session, output_dir)
-        except Exception as e:
-            print(f"[ERROR] {video_url}")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TaskProgressColumn(),
+            TextColumn("[cyan]{task.completed:>6}"),
+            transient=False,
+        ) as progress:
+            task = progress.add_task("[red]Downloading...", total=len(image_urls) + len(video_urls))
+            try:
+                for video_url in video_urls:
+                    download_link(video_url, session, output_dir)
+                    progress.update(task, advance=1)
+            except Exception as e:
+                logging.info(f"[ERROR] {video_url}")
 
-        for idx, img_url in enumerate(image_urls, start=1):
-            if img_url in processed:
-                continue
+            for idx, img_url in enumerate(image_urls, start=1):
+                progress.update(task, advance=1)
+                if img_url in processed:
+                    continue
 
-            # Random delay 2–5 seconds
-            delay = random.uniform(0.10, 1.0)
-            time.sleep(delay)
+                # Random delay 2–5 seconds
+                delay = random.uniform(0.10, 1.0)
+                time.sleep(delay)
 
-            data = download_image_bytes(img_url, session)
-            if not data:
-                append_processed(processed_log, img_url)
-                continue
+                data = download_image_bytes(img_url, session)
+                if not data:
+                    append_processed(processed_log, img_url)
+                    continue
 
-            # Decode image
-            image_array = cv2.imdecode(
-                np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR
-            )
-            if image_array is None:
-                append_processed(processed_log, img_url)
-                continue
+                # Decode image
+                image_array = cv2.imdecode(
+                    np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR
+                )
+                if image_array is None:
+                    append_processed(processed_log, img_url)
+                    continue
 
-            results = model.predict(image_array)
-            has_person = False
-            for result in results:
-                for box in result.boxes:
-                    if int(box.cls) in PERSON_CLASS_IDS:
-                        has_person = True
+                results = model.predict(image_array)
+                has_person = False
+                for result in results:
+                    for box in result.boxes:
+                        if int(box.cls) in PERSON_CLASS_IDS:
+                            has_person = True
+                            break
+                    if has_person:
                         break
                 if has_person:
-                    break
-            if has_person:
-                parsed = urlparse(img_url)
-                base_name = os.path.basename(parsed.path) or f"image_{idx}.jpg"
-                # Ensure extension
-                if not os.path.splitext(base_name)[1]:
-                    base_name += ".jpg"
-                save_path = os.path.join(output_dir, base_name)
-                # If duplicate name, append index
-                root, ext = os.path.splitext(save_path)
-                c = 1
-                while os.path.exists(save_path):
-                    save_path = f"{root}_{c}{ext}"
-                    c += 1
-                try:
-                    # cv2.imwrite(save_path, image_array)
-                    download_link(img_url, session, output_dir)
-                    print(f"[SAVED] {save_path}")
-                except Exception as e:
-                    print(f"[ERROR] {save_path}")
+                    parsed = urlparse(img_url)
+                    base_name = os.path.basename(parsed.path) or f"image_{idx}.jpg"
+                    # Ensure extension
+                    if not os.path.splitext(base_name)[1]:
+                        base_name += ".jpg"
+                    save_path = os.path.join(output_dir, base_name)
+                    # If duplicate name, append index
+                    root, ext = os.path.splitext(save_path)
+                    c = 1
+                    while os.path.exists(save_path):
+                        save_path = f"{root}_{c}{ext}"
+                        c += 1
+                    try:
+                        # cv2.imwrite(save_path, image_array)
+                        download_link(img_url, session, output_dir)
+                        # logging.info(f"[SAVED] {save_path}")
+                    except Exception as e:
+                        logging.info(f"[ERROR] {save_path}")
 
-            # Mark as processed either way
-            append_processed(processed_log, img_url)
+                # Mark as processed either way
+                append_processed(processed_log, img_url)
 
-        print("[DONE] Processing complete.")
+        logging.info("[DONE] Processing complete.")
     except Exception as e:
-        traceback.print_exc()
+        # traceback.print_exc()
+        logging.error(traceback.format_exc())
     finally:
         try:
             driver.quit()
