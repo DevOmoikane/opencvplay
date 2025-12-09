@@ -3,6 +3,9 @@ import os
 import time
 import random
 import traceback
+import threading
+import queue
+from dataclasses import dataclass
 
 import cv2
 import requests
@@ -17,26 +20,17 @@ import difPy
 import logging
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TaskProgressColumn
 
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(filename)s:%(funcName)s:%(lineno)d - %(message)s')
+logging.basicConfig(level=logging.ERROR, format='%(asctime)s - [%(levelname)s] - %(filename)s:%(funcName)s:%(lineno)d - %(message)s')
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
 
-# ------------------------------
-# YOLO (OpenCV DNN) configuration
-# ------------------------------
-# Provide your YOLO weights/config files. Example below uses YOLOv3 COCO (person class id=0)
-# You can replace with any YOLO model supported by OpenCV DNN (ONNX or Darknet).
 YOLO_WEIGHTS = os.environ.get("YOLO_WEIGHTS", "yolo11s.onnx")
 YOLO_CFG = os.environ.get("YOLO_CFG", "yolo11s.cfg")
 YOLO_NAMES = os.environ.get("YOLO_NAMES", "coco.names")
 
-PERSON_CLASS_IDS = {0}  # in COCO, class 0 is 'person'
+PERSON_CLASS_IDS = {0}
 CONF_THRESH = 0.35
 NMS_THRESH = 0.4
 
-# ------------------------------
-# Selenium helpers
-# ------------------------------
 POST_SELECTOR = "div.xrvj5dj.xd0jker"
 PROFILE_SELECTOR = "span.xjp7ctv div a.x1i10hfl.xjbqb8w.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.x1ypdohk.xt0psk2.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x16tdsg8.x1hl2dhg.xggy1nq.x1a2a7pz.xp07o12.xzmqwrg.x1citr7e.x1kdxza.xt0b8zv"
 IMAGE_SELECTOR_OLD = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
@@ -55,27 +49,19 @@ def create_driver(headless: bool = True) -> webdriver.Chrome:
     driver = webdriver.Chrome(options=chrome_options)
     return driver
 
-
 def scroll_page(driver: webdriver.Chrome, scroll_pause=2.0):
-    """Scrolls the page and returns True if new content was loaded"""
     last_height = driver.execute_script("return document.body.scrollHeight")
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-    time.sleep(scroll_pause)  # Wait for content to load
+    time.sleep(scroll_pause)
     new_height = driver.execute_script("return document.body.scrollHeight")
     return new_height != last_height
 
-
 def load_netscape_cookies(driver: webdriver.Chrome, base_url: str, cookie_file_path: str):
-    """
-    Loads cookies in Netscape format into the Selenium driver.
-    Cookies must match the domain; we first open base_url so we can set cookies.
-    """
-
     logging.info(f"Loading cookies from {cookie_file_path}")
     if not os.path.exists(cookie_file_path):
         raise FileNotFoundError(f"Cookie file not found: {cookie_file_path}")
 
-    driver.get(base_url)  # required before adding cookies
+    driver.get(base_url)
 
     with open(cookie_file_path, "r", encoding="utf-8") as f:
         for line in f:
@@ -84,12 +70,10 @@ def load_netscape_cookies(driver: webdriver.Chrome, base_url: str, cookie_file_p
                 continue
             parts = line.split("\t")
             if len(parts) != 7:
-                # Some files may use spaces instead of tabs; try splitting on whitespace
                 parts = line.split()
                 if len(parts) != 7:
                     continue
             domain, flag, path, secure, expiry, name, value = parts
-            # Selenium requires booleans and ints for some fields
             secure_bool = secure.upper() == "TRUE"
             cookie_dict = {
                 "name": name,
@@ -106,23 +90,17 @@ def load_netscape_cookies(driver: webdriver.Chrome, base_url: str, cookie_file_p
             try:
                 driver.add_cookie(cookie_dict)
             except Exception:
-                # Ignore cookies that don't match current domain/subdomain
                 pass
 
 def load_girl_page(driver: webdriver.Chrome, base_url: str):
-    # Refresh to apply cookies
     driver.get(base_url)
-
-    # Wait for initial page load
     time.sleep(3)
-
-    # Scroll until no new content loads or max attempts reached
     max_scrolls = 20
     scroll_count = 0
     try:
         while scroll_count < max_scrolls:
             if not scroll_page(driver):
-                break  # No new content loaded
+                break
             scroll_count += 1
     except Exception as e:
         logging.warning(f"Error while scrolling: {e}")
@@ -130,47 +108,7 @@ def load_girl_page(driver: webdriver.Chrome, base_url: str):
 def remove_duplicates(array1: list[str], array2: list[str]) -> list[str]:
     return [item for item in array2 if item not in array1]
 
-def load_girl_page_dynamic(driver: webdriver.Chrome, base_url: str) -> tuple[list[str], list[str]]:
-    driver.get(base_url)
-    time.sleep(3)
-    scroll_count = 0
-    image_array = []
-    video_array = []
-    try:
-        not_found_counter = 0
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            TextColumn("[cyan]{task.completed}"),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("[red]Obtaining links...", total=None)
-            while True:
-                images = find_image_urls(driver, base_url)
-                videos = find_video_urls(driver, base_url)
-                images = remove_duplicates(image_array, images)
-                videos = remove_duplicates(video_array, videos)
-                progress.update(task, completed=(len(image_array)+len(video_array)))
-                if len(images)==0 and len(videos)==0:
-                    not_found_counter += 1
-                if not_found_counter >= 10:
-                    break
-                if len(images) > 0:
-                    image_array.extend(images)
-                if len(videos) > 0:
-                    video_array.extend(videos)
-                if not scroll_page(driver):
-                    break
-            progress.update(task, completed=(len(image_array)+len(video_array)))
-    except Exception as e:
-        logging.warning(f"Error while scrolling: {e}")
-    return image_array, video_array
-
-# ------------------------------
-# Image scraping helpers
-# ------------------------------
 def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
-    # imgs = driver.find_elements(By.TAG_NAME, "img")
     imgs = driver.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR_GENERAL)
     urls = []
     for img in imgs:
@@ -189,13 +127,11 @@ def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
             src = img.get_attribute("src") or ""
             if not src:
                 continue
-        # Resolve relative URLs
         if src.startswith("http"):
             urls.append(src)
         else:
             full = urljoin(base_url, src)
             urls.append(full)
-    # Deduplicate while preserving order
     seen = set()
     deduped = []
     for u in urls:
@@ -211,20 +147,18 @@ def find_video_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
         src = video.get_attribute("src") or ""
         if not src:
             continue
-        # Resolve relative URLs
         if src.startswith("http"):
             urls.append(src)
         else:
             full = urljoin(base_url, src)
             urls.append(full)
-    # Deduplicate while preserving order
     seen = set()
     deduped = []
     for u in urls:
         if u not in seen:
             seen.add(u)
             deduped.append(u)
-    return deduped    
+    return deduped
 
 def download_image_bytes(url: str, session: requests.Session) -> bytes | None:
     try:
@@ -248,9 +182,6 @@ def download_link(url: str, session: requests.Session, output_path: str = "./"):
 def ensure_dir(path: str):
     os.makedirs(path, exist_ok=True)
 
-# ------------------------------
-# Persistence for processed URLs
-# ------------------------------
 def load_processed(file_path: str) -> set[str]:
     if not os.path.exists(file_path):
         return set()
@@ -260,6 +191,149 @@ def load_processed(file_path: str) -> set[str]:
 def append_processed(file_path: str, url: str):
     with open(file_path, "a", encoding="utf-8") as f:
         f.write(url + "\n")
+
+# ------------------------------
+# Queue types and downloader thread
+# ------------------------------
+@dataclass
+class DownloadItem:
+    url: str
+    kind: str  # "image" or "video"
+
+def downloader_thread_fn(
+    q: "queue.Queue[DownloadItem]",
+    stop_event: threading.Event,
+    session: requests.Session,
+    output_dir: str,
+    processed_log: str,
+    processed_set: set[str],
+    progress: Progress,
+    download_task_id: int,
+    yolo_model: YOLO,
+):
+    while not stop_event.is_set():
+        try:
+            item: DownloadItem = q.get(timeout=0.5)
+        except queue.Empty:
+            continue  # keep waiting forever until stop_event is set
+
+        url = item.url
+        kind = item.kind
+
+        try:
+            if url in processed_set:
+                progress.update(download_task_id, advance=1)
+                q.task_done()
+                continue
+
+            if kind == "video":
+                # download video as-is
+                download_link(url, session, output_dir)
+                append_processed(processed_log, url)
+                processed_set.add(url)
+                progress.update(download_task_id, advance=1)
+                q.task_done()
+                continue
+
+            # kind == "image" -> person filtering
+            delay = random.uniform(0.10, 1.0)
+            time.sleep(delay)
+
+            data = download_image_bytes(url, session)
+            if not data:
+                append_processed(processed_log, url)
+                processed_set.add(url)
+                progress.update(download_task_id, advance=1)
+                q.task_done()
+                continue
+
+            image_array = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
+            if image_array is None:
+                append_processed(processed_log, url)
+                processed_set.add(url)
+                progress.update(download_task_id, advance=1)
+                q.task_done()
+                continue
+
+            results = yolo_model.predict(image_array)
+            has_person = False
+            for result in results:
+                for box in result.boxes:
+                    if int(box.cls) in PERSON_CLASS_IDS:
+                        has_person = True
+                        break
+                if has_person:
+                    break
+
+            if has_person:
+                # keep original name, add unique suffix if exists
+                parsed = urlparse(url)
+                base_name = os.path.basename(parsed.path) or "image.jpg"
+                if not os.path.splitext(base_name)[1]:
+                    base_name += ".jpg"
+                # We keep your original approach to avoid overwriting by delegating to download_link
+                download_link(url, session, output_dir)
+
+            append_processed(processed_log, url)
+            processed_set.add(url)
+            progress.update(download_task_id, advance=1)
+        except Exception:
+            logging.info(f"[ERROR] processing {url}")
+        finally:
+            q.task_done()
+
+# ------------------------------
+# Dynamic page loader that feeds queue immediately
+# ------------------------------
+def load_girl_page_dynamic_to_queue(
+    driver: webdriver.Chrome,
+    base_url: str,
+    found_progress: Progress,
+    found_task_id: int,
+    enqueued_set: set[str],
+    q: "queue.Queue[DownloadItem]",
+) -> tuple[int, int]:
+    driver.get(base_url)
+    time.sleep(3)
+    image_count = 0
+    video_count = 0
+    not_found_counter = 0
+
+    try:
+        while True:
+            images = find_image_urls(driver, base_url)
+            videos = find_video_urls(driver, base_url)
+
+            # enqueue only new ones
+            new_images = [u for u in images if u not in enqueued_set]
+            new_videos = [u for u in videos if u not in enqueued_set]
+
+            for u in new_images:
+                enqueued_set.add(u)
+                q.put(DownloadItem(url=u, kind="image"))
+                image_count += 1
+                found_progress.update(found_task_id, advance=1)
+
+            for u in new_videos:
+                enqueued_set.add(u)
+                q.put(DownloadItem(url=u, kind="video"))
+                video_count += 1
+                found_progress.update(found_task_id, advance=1)
+
+            if len(new_images) == 0 and len(new_videos) == 0:
+                not_found_counter += 1
+            else:
+                not_found_counter = 0
+
+            if not_found_counter >= 10:
+                break
+
+            if not scroll_page(driver):
+                break
+    except Exception as e:
+        logging.warning(f"Error while scrolling: {e}")
+
+    return image_count, video_count
 
 # ------------------------------
 # Main workflow
@@ -277,121 +351,89 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
     ensure_dir(output_dir)
 
     logging.info(f"Loading YOLO...")
-    # net, names, backend = load_yolo()
     model = YOLO(yolo_model)
 
     logging.info(f"Starting Selenium...")
     driver = create_driver(headless=headless)
-    try:
-        image_urls = []
-        video_urls = []
-        if url is not None:
-            load_netscape_cookies(driver, url, cookies_file)
-            logging.info(f"Collecting from: {url}")
-            image_urls, video_urls = load_girl_page_dynamic(driver, url)
-            logging.info(f"Found {len(image_urls)} image(s).")
-            logging.info(f"Found {len(video_urls)} videos(s).")
-        elif base_url is not None and girls_list_file is not None:
-            logging.info(f"Collecting images from file list")
-            load_netscape_cookies(driver, "https://www.threads.com", cookies_file)
-            with open(girls_list_file, 'r') as f:
-                for line in f:
-                    girl = line.strip()
-                    if girl is not None:
-                        try:
-                            girl_url = base_url + girl + "/media"
-                            logging.info(f"Collecting from: {girl_url}")
-                            images, videos = load_girl_page_dynamic(driver, girl_url)
-                            logging.info(f"Found {len(images)} image(s) for {girl}")
-                            logging.info(f"Found {len(videos)} videos(s) for {girl}")
-                            image_urls.extend(images)
-                            video_urls.extend(videos)
-                        except Exception:
-                            pass
 
-        processed = load_processed(processed_log)
-        session = requests.Session()
+    # Shared state
+    processed = load_processed(processed_log)
+    enqueued: set[str] = set()  # avoid double-enqueue within run
+    session = requests.Session()
 
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TaskProgressColumn(),
-            TextColumn("[cyan]{task.completed:>6}"),
-            transient=False,
-        ) as progress:
-            task = progress.add_task("[red]Downloading...", total=len(image_urls) + len(video_urls))
-            try:
-                for video_url in video_urls:
-                    download_link(video_url, session, output_dir)
-                    progress.update(task, advance=1)
-            except Exception as e:
-                logging.info(f"[ERROR] {video_url}")
+    # Queue and downloader thread
+    work_queue: "queue.Queue[DownloadItem]" = queue.Queue(maxsize=0)
+    stop_event = threading.Event()
 
-            for idx, img_url in enumerate(image_urls, start=1):
-                progress.update(task, advance=1)
-                if img_url in processed:
-                    continue
+    # Progress UI with two concurrent tasks
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        BarColumn(),
+        TaskProgressColumn(),
+        TextColumn("[cyan]{task.completed}"),
+        transient=False,
+    ) as progress:
+        found_task = progress.add_task("[magenta]Found (images+videos)", total=None)
+        download_task = progress.add_task("[green]Downloading", total=None)
 
-                # Random delay 2–5 seconds
-                delay = random.uniform(0.10, 1.0)
-                time.sleep(delay)
+        # Start downloader thread
+        downloader_thread = threading.Thread(
+            target=downloader_thread_fn,
+            args=(work_queue, stop_event, session, output_dir, processed_log, processed, progress, download_task, model),
+            daemon=True,
+        )
+        downloader_thread.start()
 
-                data = download_image_bytes(img_url, session)
-                if not data:
-                    append_processed(processed_log, img_url)
-                    continue
+        total_found = 0
 
-                # Decode image
-                image_array = cv2.imdecode(
-                    np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR
-                )
-                if image_array is None:
-                    append_processed(processed_log, img_url)
-                    continue
-
-                results = model.predict(image_array)
-                has_person = False
-                for result in results:
-                    for box in result.boxes:
-                        if int(box.cls) in PERSON_CLASS_IDS:
-                            has_person = True
-                            break
-                    if has_person:
-                        break
-                if has_person:
-                    parsed = urlparse(img_url)
-                    base_name = os.path.basename(parsed.path) or f"image_{idx}.jpg"
-                    # Ensure extension
-                    if not os.path.splitext(base_name)[1]:
-                        base_name += ".jpg"
-                    save_path = os.path.join(output_dir, base_name)
-                    # If duplicate name, append index
-                    root, ext = os.path.splitext(save_path)
-                    c = 1
-                    while os.path.exists(save_path):
-                        save_path = f"{root}_{c}{ext}"
-                        c += 1
-                    try:
-                        # cv2.imwrite(save_path, image_array)
-                        download_link(img_url, session, output_dir)
-                        # logging.info(f"[SAVED] {save_path}")
-                    except Exception as e:
-                        logging.info(f"[ERROR] {save_path}")
-
-                # Mark as processed either way
-                append_processed(processed_log, img_url)
-
-        logging.info("[DONE] Processing complete.")
-    except Exception as e:
-        # traceback.print_exc()
-        logging.error(traceback.format_exc())
-    finally:
         try:
-            driver.quit()
-        except Exception:
-            pass
+            if url is not None:
+                load_netscape_cookies(driver, url, cookies_file)
+                logging.info(f"Collecting from: {url}")
+                img_count, vid_count = load_girl_page_dynamic_to_queue(
+                    driver, url, progress, found_task, enqueued, work_queue
+                )
+                total_found += img_count + vid_count
+                logging.info(f"Found {img_count} image(s).")
+                logging.info(f"Found {vid_count} videos(s).")
+            elif base_url is not None and girls_list_file is not None:
+                logging.info(f"Collecting images from file list")
+                load_netscape_cookies(driver, "https://www.threads.com", cookies_file)
+                with open(girls_list_file, 'r') as f:
+                    for line in f:
+                        girl = line.strip()
+                        if girl:
+                            try:
+                                girl_url = base_url + girl + "/media"
+                                logging.info(f"Collecting from: {girl_url}")
+                                img_count, vid_count = load_girl_page_dynamic_to_queue(
+                                    driver, girl_url, progress, found_task, enqueued, work_queue
+                                )
+                                total_found += img_count + vid_count
+                                logging.info(f"Found {img_count} image(s) for {girl}")
+                                logging.info(f"Found {vid_count} videos(s) for {girl}")
+                            except Exception:
+                                logging.exception("Error while collecting for user")
 
+            # We don’t stop the downloader just because the queue is empty.
+            # But at the end of the program we should stop it explicitly.
+            # Wait for current queue to drain if you want to finish downloads before exit:
+            work_queue.join()
+
+        except Exception:
+            logging.error(traceback.format_exc())
+        finally:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+            # Explicitly stop the downloader thread
+            stop_event.set()
+            downloader_thread.join(timeout=5)
+
+    # Post-processing: duplicates and similar
     dif = difPy.build(output_dir)
     duplicates = difPy.search(dif, similarity="duplicates")
     similar = difPy.search(dif, similarity="similar")
