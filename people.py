@@ -39,8 +39,10 @@ NMS_THRESH = 0.4
 # ------------------------------
 POST_SELECTOR = "div.xrvj5dj.xd0jker"
 PROFILE_SELECTOR = "span.xjp7ctv div a.x1i10hfl.xjbqb8w.x1ejq31n.x18oe1m7.x1sy0etr.xstzfhl.x972fbf.x10w94by.x1qhh985.x14e42zd.x9f619.x1ypdohk.xt0psk2.x3ct3a4.xdj266r.x14z9mp.xat24cr.x1lziwak.xexx8yu.xyri2b.x18d9i69.x1c1uobl.x16tdsg8.x1hl2dhg.xggy1nq.x1a2a7pz.xp07o12.xzmqwrg.x1citr7e.x1kdxza.xt0b8zv"
-IMAGE_SELECTOR = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
+IMAGE_SELECTOR_OLD = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
 IMAGE_SELECTOR_ALT = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xuiwhb7.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk.x1ey2m1c.xtijo5x.x1o0tod.x10l6tqk.x13vifvy.x5yr21d.xh8yej3"
+IMAGE_SELECTOR_NOT_FOUND = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w.xp3xoqj.x1g40iwv.x47corl.x87ps6o.x1obq294.x5a5i1n.xde0f50.x15x8krk"
+IMAGE_SELECTOR_GENERAL = "img.xl1xv1r.x9f619.x1lliihq.xmz0i5r.x193iq5w"
 VIDEO_SELECTOR = "video.x1lliihq.x5yr21d.xh8yej3"
 
 def create_driver(headless: bool = True) -> webdriver.Chrome:
@@ -159,6 +161,7 @@ def load_girl_page_dynamic(driver: webdriver.Chrome, base_url: str) -> tuple[lis
                     video_array.extend(videos)
                 if not scroll_page(driver):
                     break
+            progress.update(task, completed=(len(image_array)+len(video_array)))
     except Exception as e:
         logging.warning(f"Error while scrolling: {e}")
     return image_array, video_array
@@ -168,7 +171,7 @@ def load_girl_page_dynamic(driver: webdriver.Chrome, base_url: str) -> tuple[lis
 # ------------------------------
 def find_image_urls(driver: webdriver.Chrome, base_url: str) -> list[str]:
     # imgs = driver.find_elements(By.TAG_NAME, "img")
-    imgs = driver.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR)
+    imgs = driver.find_elements(By.CSS_SELECTOR, IMAGE_SELECTOR_GENERAL)
     urls = []
     for img in imgs:
         srcset = img.get_attribute("srcset") or ""
@@ -296,7 +299,7 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
                     girl = line.strip()
                     if girl is not None:
                         try:
-                            girl_url = base_url + girl
+                            girl_url = base_url + girl + "/media"
                             logging.info(f"Collecting from: {girl_url}")
                             images, videos = load_girl_page_dynamic(driver, girl_url)
                             logging.info(f"Found {len(images)} image(s) for {girl}")
