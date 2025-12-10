@@ -58,9 +58,11 @@ class FileExtensionCorrector:
             'errors': 0,
             'unknown': 0,
             'correct': 0,
+            'deleted': 0,
             'file_types': defaultdict(int),
             'changes_by_type': defaultdict(int),
-            'errors_list': []
+            'errors_list': [],
+            'duplicates': []
         }
 
     def get_file_signature(self, file_path: Path, max_bytes: int = 40) -> Optional[bytes]:
@@ -140,6 +142,7 @@ class FileExtensionCorrector:
             if new_path.exists():
                 self.stats['errors'] += 1
                 self.stats['errors_list'].append(f"{file_path}: Target file {new_path} already exists")
+                self.stats['duplicates'].append(file_path)
                 return False
             
             file_path.rename(new_path)
@@ -206,6 +209,14 @@ class FileExtensionCorrector:
                 
                 progress.update(task, advance=1)
 
+    def delete_duplicates(self, dry_run: bool = False):
+        try:
+            for file_path in self.stats['duplicated']:
+                os.remove(file_path)
+                self.stats['deleted'] += 1
+        except Exception:
+            pass
+
     def display_summary(self, dry_run: bool = False, time_taken: float = 0) -> None:
         """Display a comprehensive summary of the operation"""
         
@@ -241,6 +252,11 @@ class FileExtensionCorrector:
             "Errors", 
             str(self.stats['errors']), 
             f"{(self.stats['errors']/total_files*100):.1f}%" if total_files > 0 else "0%"
+        )
+        summary_table.add_row(
+            "Deleted",
+            str(self.stats['deleted']),
+            f"{(self.stats['deleted']/total_files*100):.1f}%" if total_files > 0 else "0%"
         )
         summary_table.add_row(
             "Time Taken", 
@@ -331,6 +347,8 @@ class FileExtensionCorrector:
         
         # Process files
         self.process_files(files, dry_run)
+
+        self.delete_duplicates(dry_run)
         
         # Display summary
         time_taken = time.time() - start_time
