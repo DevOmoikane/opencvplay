@@ -223,7 +223,8 @@ def downloader_thread_fn(
         try:
             if url in processed_set:
                 progress.update(download_task_id, advance=1)
-                q.task_done()
+                if not q.empty():
+                    q.task_done()
                 continue
 
             if kind == "video":
@@ -232,7 +233,8 @@ def downloader_thread_fn(
                 append_processed(processed_log, url)
                 processed_set.add(url)
                 progress.update(download_task_id, advance=1)
-                q.task_done()
+                if not q.empty():
+                    q.task_done()
                 continue
 
             # kind == "image" -> person filtering
@@ -244,7 +246,8 @@ def downloader_thread_fn(
                 append_processed(processed_log, url)
                 processed_set.add(url)
                 progress.update(download_task_id, advance=1)
-                q.task_done()
+                if not q.empty():
+                    q.task_done()
                 continue
 
             image_array = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
@@ -252,7 +255,8 @@ def downloader_thread_fn(
                 append_processed(processed_log, url)
                 processed_set.add(url)
                 progress.update(download_task_id, advance=1)
-                q.task_done()
+                if not q.empty():
+                    q.task_done()
                 continue
 
             results = yolo_model.predict(image_array)
@@ -280,7 +284,11 @@ def downloader_thread_fn(
         except Exception:
             logging.info(f"[ERROR] processing {url}")
         finally:
-            q.task_done()
+            try:
+                if not q.empty():
+                    q.task_done()
+            except Exception:
+                pass
 
 # ------------------------------
 # Dynamic page loader that feeds queue immediately
