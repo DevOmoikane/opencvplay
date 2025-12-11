@@ -1,4 +1,4 @@
-FROM python:3.10.12-slim-bookworm
+FROM python:3.11.14-slim-bookworm
 
 RUN apt-get -y update
 RUN apt-get install -y --fix-missing \
@@ -20,6 +20,7 @@ RUN apt-get install -y --fix-missing \
     pkg-config \
     python3-dev \
     python3-numpy \
+    python3-pip \
     sqlite3 \
     software-properties-common \
     zip \
@@ -34,14 +35,24 @@ RUN apt-get install -y --fix-missing \
 
 RUN cd ~ && \
     mkdir -p dlib && \
-    git clone -b 'v19.9' --single-branch https://github.com/davisking/dlib.git dlib/ && \
+    git clone -b 'v20.0' --single-branch https://github.com/davisking/dlib.git dlib/ && \
     cd  dlib/ && \
-    python3 setup.py install --yes USE_AVX_INSTRUCTIONS
+    pip install .
+
+# COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
 
 WORKDIR /app
-COPY people_definer_requirements.txt requirements.txt
+# COPY people_definer_requirements.txt requirements.txt
+COPY face_requirements.txt requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
+# COPY uv.lock uv.lock
+# COPY pyproject.toml pyproject.toml
+# COPY .python-version .python-version
+# RUN uv sync 
+# RUN mkdir input && mkdir output 
+# RUN source .venv/bin/activate
 
-COPY people_definer.py people_definer.py
+# COPY people_definer.py people_definer.py
+COPY face_extract.py face_extract.py
 
-CMD ["python3", "people_definer.py"]
+CMD ["python3", "face_extract.py", "-i", "input/", "-o", "output/"]
