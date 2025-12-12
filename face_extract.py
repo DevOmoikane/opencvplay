@@ -10,17 +10,20 @@ from facedetector import FaceDetector
 def getFiles(path):
   files = list()
   if os.path.isdir(path):
+    print(f"Getting files from directory: {path}")
     path = Path(path)
     dirFiles = (
         list(path.glob("*.jpg")) + list(path.glob("*.jpeg")) + list(path.glob("*.png"))
     )
     for file in dirFiles:
+      print(f"Getting file: {file}")
       filePath = file
       if os.path.isdir(filePath):
         files = files + getFiles(filePath)
       else:
         kind = ft.guess(filePath)
         basename = os.path.basename(filePath)
+        print(f"Appending file: {filePath}")
         files.append({
           'dir': os.path.abspath(path),
           'path': filePath,
@@ -51,6 +54,7 @@ def main(args):
 
   images = []
   for file in files:
+    print(f"[INFO] processing file: {file['path']}")
     dir, path, mime, filename = file.values()
 
     targetDir = dir.replace(inputDir, outputDir)

@@ -351,7 +351,18 @@ def load_girl_page_dynamic_to_queue(
 @click.option("--processed-log", "processed_log", default="processed.txt", show_default=True, help="File storing processed image URLs.")
 @click.option("--headless/--no-headless", default=True, show_default=True, help="Run browser headless.")
 @click.option("--yolo-model", default="yolo11s.pt")
-def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log, headless, yolo_model):
+@click.option("--diff/--no-diff", default=False, show_default=True, help="Run diff process and erase duplicates")
+def main(**kwargs):
+    base_url = kwargs['base_url']
+    girls_list_file = kwargs['girls_list_file']
+    url = kwargs['url']
+    cookies_file = kwargs['cookies_file']
+    output_dir = kwargs['output_dir']
+    processed_log = kwargs['processed_log']
+    headless = kwargs['headless']
+    yolo_model = kwargs['yolo_model']
+    diff = kwargs['diff']
+
     ensure_dir(output_dir)
 
     logging.info(f"Loading YOLO...")
@@ -438,17 +449,13 @@ def main(base_url, girls_list_file, url, cookies_file, output_dir, processed_log
             downloader_thread.join(timeout=5)
 
     # Post-processing: duplicates and similar
-    dif = difPy.build(output_dir)
-    duplicates = difPy.search(dif, similarity="duplicates")
-    similar = difPy.search(dif, similarity="similar")
-    try:
-        duplicates.delete(silent_del=True)
-    except Exception:
-        pass
-    try:
-        similar.delete(silent_del=True)
-    except Exception:
-        pass
+    if diff:
+        dif = difPy.build(output_dir)
+        similar = difPy.search(dif, similarity="similar")
+        try:
+            similar.delete(silent_del=True)
+        except Exception:
+            pass
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,7 @@
+tensorflow[and-cuda]
 facedetector-py
 opencv-python
 rich
 filetype
 tf-keras
+cupy

@@ -1,7 +1,10 @@
-# FROM python:3.11.14-slim-bookworm
-FROM tensorflow/tensorflow:2.16.1-gpu
+FROM nvidia/cuda:13.0.0-cudnn-devel-ubuntu24.04
 
-RUN apt-get -y update && apt-get install -y --fix-missing \
+ARG UID
+ARG GID
+
+#install python
+RUN DEBIAN_FRONTEND=noninteractive apt-get -y update && apt-get install -y --fix-missing \
     build-essential \
     cmake \
     gfortran \
@@ -19,7 +22,6 @@ RUN apt-get -y update && apt-get install -y --fix-missing \
     libswscale-dev \
     pkg-config \
     python3-dev \
-    python3-numpy \
     python3-pip \
     sqlite3 \
     software-properties-common \
@@ -36,18 +38,20 @@ RUN apt-get -y update && apt-get install -y --fix-missing \
 RUN cd ~ && \
     mkdir -p dlib && \
     git clone -b 'v20.0' --single-branch https://github.com/davisking/dlib.git dlib/ && \
-    cd  dlib/ && \
+    cd dlib/ && \
     mkdir build && cd build && \
     cmake .. -DDLIB_USE_CUDA=1 -DUSE_AVX_INSTRUCTIONS=1 && \
     cmake --build . --config Release -- -j$(nproc) && \
     cd ../ && \
-    pip install .
-
+    pip install --break-system-packages .
 
 WORKDIR /app
 COPY face_requirements.txt requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
 
-COPY face_extract.py face_extract.py
+USER ${UID}:${GID}
 
-CMD ["python3", "face_extract.py", "-i", "input/", "-o", "output/"]
+COPY face_extract.py ./
+COPY similarity_gpu.py ./
+
+CMD ["python3", "api_service.py"]
