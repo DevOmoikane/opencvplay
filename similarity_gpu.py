@@ -5,6 +5,7 @@ from pathlib import Path
 import os
 import shutil
 import numpy as np
+import click
 
 from PIL import Image, ImageChops
 
@@ -57,19 +58,28 @@ def gpu_summarise(img: Image.Image, progress: Progress, task: int) -> cp.ndarray
     img_array = cp.asarray(img)
     
     # Resize on GPU using interpolation
-    if img_array.ndim == 3:  # RGB image
-        # Downscale using GPU-accelerated interpolation
-        scale_factor = 16 / img_array.shape[0]
-        summary = zoom(img_array, (scale_factor, scale_factor, 1), order=1)
-    else:  # Grayscale
-        scale_factor = 16 / img_array.shape[0]
-        summary = zoom(img_array, (scale_factor, scale_factor), order=1)
+    # Determine current height and width
+    if img_array.ndim == 3:  # H, W, C
+        h, w, c = img_array.shape
+        zoom_factors = (16 / h, 16 / w, 1.0)
+        summary = zoom(img_array, zoom_factors, order=1)
+    elif img_array.ndim == 4:  # Batch, H, W, C
+        b, h, w, c = img_array.shape
+        zoom_factors = (1.0, 16 / h, 16 / w, 1.0)
+        summary = zoom(img_array, zoom_factors, order=1)
+    else:  # Grayscale: H, W
+        h, w = img_array.shape
+        zoom_factors = (16 / h, 16 / w)
+        summary = zoom(img_array, zoom_factors, order=1)
     progress.update(task, advance=1)
     return summary
 
 def gpu_difference(gpu_img1: cp.ndarray, gpu_img2: cp.ndarray) -> float:
     """Calculate difference between two GPU arrays."""
     # Absolute difference on GPU
+    if gpu_img1.shape != gpu_img2.shape:
+        return 1.0
+    
     diff = cp.abs(gpu_img1 - gpu_img2)
     
     # Mean difference on GPU (much faster than CPU loop)
@@ -80,9 +90,13 @@ def gpu_difference(gpu_img1: cp.ndarray, gpu_img2: cp.ndarray) -> float:
     
     return float(avg_diff.get())  # Transfer result back to CPU
 
-def explore_directory(path: Path) -> None:
+@click.command()
+@click.argument("path", type=Path)
+@click.option('--duplicated', type=Path, default=Path("/images/duplicated/"), help="Directory to move duplicates into.")
+def explore_directory(path: Path, duplicated: Path) -> None:
     """Find images in a directory and compare them all."""
 
+    print(f"Exploring directory: {path}")
     files = (
         list(path.glob("*.jpg")) + list(path.glob("*.jpeg")) + list(path.glob("*.png"))
     )
@@ -111,21 +125,14 @@ def explore_directory(path: Path) -> None:
             # print(key, diff)
             diffs[key] = diff
 
-    # print()
-    # print("Near-duplicates found:")
-    # print("======================")
-    # for key, diff in diffs.items():
-    #     if diff < 0.07:
-    #         print(key, diff)
-
     print()
     print("Duplicates found:")
     print("======================")
     for key, diff in diffs.items():
         if diff < 0.005:
             print(key, diff)
-            move_smallest_image(key[0], key[1], "women/")
+            move_smallest_image(key[0], key[1], duplicated)
 
 
 if __name__ == "__main__":
-    explore_directory(Path("saved_people"))
+    explore_directory()

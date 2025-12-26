@@ -31,7 +31,7 @@ FILE_SIGNATURES = {
     'bmp': [(0x00, b'\x42\x4d')],
     'tif': [(0x00, b'\x49\x49\x2a\x00')],  # TIFF little-endian
     'tif': [(0x00, b'\x4d\x4d\x00\x2a')],  # TIFF big-endian
-    'webp': [(0x00, b'\x52\x49\x46\x46'),(0x06, b'\x00\x00\x57\x45\x42')],
+    'webp': [(0x00, b'\x52\x49\x46\x46'),(0x08, b'\x57\x45\x42')],
     'zip': [(0x00, b'\x50\x4b\x03\x04')],
     'zip': [(0x00, b'\x50\x4b\x05\x06')],  # Empty ZIP
     'zip': [(0x00, b'\x50\x4b\x07\x08')],  # Spanned ZIP

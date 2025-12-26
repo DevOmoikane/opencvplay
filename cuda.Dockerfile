@@ -48,7 +48,8 @@ RUN cd ~ && \
 WORKDIR /app
 COPY face_requirements.txt requirements.txt
 RUN pip install --break-system-packages --no-cache-dir -r requirements.txt
-
+COPY extra_requirements.txt .
+RUN pip install --break-system-packages --no-cache-dir -r extra_requirements.txt
 USER ${UID}:${GID}
 
 COPY face_extract.py ./
